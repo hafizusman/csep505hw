@@ -1,12 +1,29 @@
-#lang plai
+#lang plai-typed
 
 ;;;
 ;;; Chapter 9
 ;;;
-;
-;TODO: Add lists and binary trees as built-in datatypes to the programming language.
-;
 
+(define-type ExprC
+  [numC (n : number)] 
+  [varC (s : symbol)] 
+  [appC (fun : ExprC) (arg : ExprC)] 
+  [plusC (l : ExprC) (r : ExprC)] 
+  [multC (l : ExprC) (r : ExprC)] 
+  [lamC (arg : symbol) (body : ExprC)] 
+  [setC (var : symbol) (arg : ExprC)] 
+  [seqC (b1 : ExprC) (b2 : ExprC)]
+  [treeC (val : 'a) (left : ExprC) (right : ExprC)]
+  [listC (val : 'a) (next : ExprC)])
+
+(define my-list (listC 1 (listC 3 (listC 5 (listC 6 (numC 0))))))
+(define node1 (treeC 'abc (numC 0) (numC 0)))
+(define node2 (treeC 'xyz (numC 0) (numC 0)))
+(define node3 (treeC 'def node1 node2))
+(define my-tree (treeC 'uvw node3 (treeC '_ (numC 0) (numC 0))))
+
+my-list
+my-tree
 
 ;;;;
 ;;;; Chapter 8
