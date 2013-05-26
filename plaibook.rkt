@@ -1,33 +1,223 @@
-#lang plai-typed
-
 ;;;
 ;;; Chapter 9
 ;;;
 
+;; Exercise
+;; Run the equivalent program through your interpreter for boxes and make sure it produces a cyclic value. How do you check this?
+
+; The central idea is this two-step process: first name an vacant placeholder; then mutate the placeholder so its content is itself; to obtain “itself”, use the name previously bound. Of course, we need not be limited to “self-cycles”: we can also have mutually-cyclic data (where no one element is cyclic but their combination is).
+#lang plai-typed
+
 (define-type ExprC
   [numC (n : number)] 
-  [varC (s : symbol)] 
+  [idC (s : symbol)] 
   [appC (fun : ExprC) (arg : ExprC)] 
   [plusC (l : ExprC) (r : ExprC)] 
   [multC (l : ExprC) (r : ExprC)] 
   [lamC (arg : symbol) (body : ExprC)] 
-  [setC (var : symbol) (arg : ExprC)] 
-  [seqC (b1 : ExprC) (b2 : ExprC)]
-  [treeC (val : 'a) (left : ExprC) (right : ExprC)]
-  [listC (val : 'a) (next : ExprC)])
+  [boxC (arg : ExprC)] 
+  [unboxC (arg : ExprC)] 
+  [setboxC (b : ExprC) (v : ExprC)] 
+  [seqC (b1 : ExprC) (b2 : ExprC)]) 
 
-(define my-list (listC 1 (listC 3 (listC 5 (listC 6 (numC 0))))))
-(define node1 (treeC 'abc (numC 0) (numC 0)))
-(define node2 (treeC 'xyz (numC 0) (numC 0)))
-(define node3 (treeC 'def node1 node2))
-(define my-tree (treeC 'uvw node3 (treeC '_ (numC 0) (numC 0))))
+(define-type-alias Location number)
 
-my-list
-my-tree
+(define-type Binding
+  [bind (name : symbol) (val : Location)])
+(define-type-alias Env (listof Binding))
+(define empty-env empty)
+(define extend-env cons)
+
+(define-type Storage
+  [cell (location : Location) (val : Value)])
+(define-type-alias Store (listof Storage))
+(define empty-store empty)
+(define override-store cons)
+
+(define-type Value
+  [numV (n : number)]
+  [closV (arg : symbol) (body : ExprC) (env : Env)]
+  [boxV (l : Location)])
+
+(define-type Result
+  [v*s (v : Value) (s : Store)])
+
+
+(define new-loc
+  (let ([n (box 0)])
+    (λ ()
+      (begin
+        (set-box! n (add1 (unbox n)))
+        (unbox n)))))
+
+(define (lookup [s : symbol] [env : Env]) : Location
+  (if (empty? env)
+      (error 'lookup (string-append "symbol not found: " (to-string s)))
+      (if (symbol=? s (bind-name (first env)))
+          (bind-val (first env))
+          (lookup s (rest env)))))
+
+(define (fetch [loc : Location] [sto : Store]) : Value
+  (if (empty? sto)
+      (error 'fetch (string-append "loc not found: " (to-string loc)))
+      (if (= loc (cell-location (first sto)))
+          (cell-val (first sto))
+          (fetch loc (rest sto)))))
+
+(define (num+ [l : Value] [r : Value]) : Value
+  (if (and (numV? l) (numV? r))
+      (numV (+ (numV-n l) (numV-n r)))
+      (error 'num+ "num+ incorrect lhs and rhs type!!")))
+
+(define (num* [l : Value] [r : Value]) : Value
+  (if (and (numV? l) (numV? r))
+      (numV (* (numV-n l) (numV-n r)))
+      (error 'num* "num* incorrect lhs and rhs type!!")))
+
+
+(define (interp [expr : ExprC] [env : Env] [sto : Store]) : Result
+  (type-case ExprC expr 
+    [numC (n) (v*s 
+               (numV n) 
+               sto)] 
+    
+    [idC (n) (v*s 
+              (fetch 
+               (lookup n env) 
+               sto) 
+              sto)] 
+    
+    [appC (f a) (type-case Result (interp f env sto)
+                  [v*s (v-f s-f)
+                       (type-case Result (interp a env s-f)
+                         [v*s (v-a s-a)
+                              (let ([where (new-loc)]) 
+                                (interp (closV-body v-f) 
+                                        (extend-env (bind (closV-arg v-f) 
+                                                          where) 
+                                                    (closV-env v-f)) 
+                                        (override-store (cell where v-a) s-a)))])])]
+    
+    [plusC (l r) (type-case Result (interp l env sto)
+                   [v*s (v-l s-l)
+                        (type-case Result (interp r env s-l)
+                          [v*s (v-r s-r)
+                               (v*s (num+ v-l v-r) s-r)])])] 
+    
+    [multC (l r) (type-case Result (interp l env sto)
+                   [v*s (v-l s-l)
+                        (type-case Result (interp r env s-l)
+                          [v*s (v-r s-r) 
+                               (v*s (num* v-l v-r) s-r)])])] 
+    
+    [lamC (a b) (v*s 
+                 (closV a b env) 
+                 sto)]
+    
+    [boxC (a) (type-case Result (interp a env sto) 
+                [v*s (v-a s-a) 
+                     (let ([where (new-loc)]) 
+                       (v*s (boxV where) 
+                            (override-store (cell where v-a) 
+                                            s-a)))])] 
+    
+    [unboxC (a) (type-case Result (interp a env sto) 
+                  [v*s (v-a s-a) 
+                       (v*s (fetch (boxV-l v-a) s-a) s-a)])] 
+    
+    [setboxC (b v) (type-case Result (interp b env sto) 
+                     [v*s (v-b s-b) 
+                          (type-case Result (interp v env s-b) 
+                            [v*s (v-v s-v) 
+                                 (v*s v-v 
+                                      (override-store (cell (boxV-l v-b) 
+                                                            v-v) 
+                                                      s-v))])])] 
+    
+    [seqC (b1 b2) (type-case Result (interp b1 env sto)
+                    [v*s (v-b1 s-b1)
+                         (interp b2 env s-b1)])]
+    
+    ))
+
+#;((λ (x)
+   (begin
+     (set-box! x x)
+     x))
+ (box 'dummy))
+
+
+(define test-cyclic-data (appC (lamC 'x (seqC (setboxC (idC 'x) (idC 'x)) (idC 'x))) (boxC (numC 123))))
+(define t (interp test-cyclic-data empty-env empty-store))
+
+; todo: is this actually cyclic??
+(test t (v*s (boxV 1) (list (cell 1 (boxV 1)) (cell 2 (boxV 1)) (cell 1 (numV 123)))))
+
+; #lang plai
+;
+;; When the above program is Run, Racket prints this as: #0=’#&#0#. 
+;; This notation is in fact precisely what we want. 
+;; Recall that #& is how Racket prints boxes. 
+;; The #0= (and similarly for other numbers) is how Racket names pieces of cyclic data. 
+;; Thus, Racket is saying, “#0 is bound to a box whose content is #0#, i.e., 
+;;  whatever is bound to #0, i.e., itself”.
+;(let ([b (box 'dummy)])
+;  (begin 
+;    (set-box! b b)
+;    b))
+;
+;
+;
+;;;
+;#lang plai-typed
+;
+;(define-type ExprC
+;  [numC (n : number)] 
+;  [varC (s : symbol)] 
+;  [appC (fun : ExprC) (arg : ExprC)] 
+;  [plusC (l : ExprC) (r : ExprC)] 
+;  [multC (l : ExprC) (r : ExprC)] 
+;  [lamC (arg : symbol) (body : ExprC)] 
+;  [setC (var : symbol) (arg : ExprC)] 
+;  [seqC (b1 : ExprC) (b2 : ExprC)]
+;  [treeC (val : 'a) (left : ExprC) (right : ExprC)]
+;  [listC (val : 'a) (next : ExprC)])
+;
+;(define my-list (listC 1 (listC 3 (listC 5 (listC 6 (numC 0))))))
+;(define node1 (treeC 'abc (numC 0) (numC 0)))
+;(define node2 (treeC 'xyz (numC 0) (numC 0)))
+;(define node3 (treeC 'def node1 node2))
+;(define my-tree (treeC 'uvw node3 (treeC '_ (numC 0) (numC 0))))
+;
+;my-list
+;my-tree
+;
+;; won't work since b is undefined
+;#;(let ([b b])
+;  b)
+;; the above desugared
+;#;((λ (b)
+;  b)
+; b)
+;; or even
+;#;((λ (x)
+;   x)
+; b)
+;
+;;we need to first create a “place” for the datum, then refer to that place within itself. The use of “then”—i.e., the introduction of time—should suggest a mutation operation.
+;;Note that this program will not run in Typed PLAI as written. We’ll return to typing such programs later [REF]. For now, run it in the untyped (#lang plai) language.;(let ([b (box 'dummy)])
+;(let ([b (box 'dummy)])
+;  (begin 
+;    (set-box! b b)
+;    b))
+;
+
 
 ;;;;
 ;;;; Chapter 8
 ;;;;
+;
+;#lang plai-typed
 ;
 ;;; using variables (i.e. variable mutation )
 ;(define-type ExprC
