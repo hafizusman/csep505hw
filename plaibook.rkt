@@ -201,22 +201,26 @@
 ;    ((unbox fact) 3))))
 ;
 ;; Desugaring above
-;(let ([fact (box 'dummy)])
-;  (set-box! fact
-;            (λ (n)
-;              (if (zero? n)
-;                  1
-;                  (* n ((unbox fact) (- n 1))))))
-;  ((unbox fact) 3))
+;(let ([fact (box 'dummy)]) 
+;  (begin 
+;    (set-box! fact 
+;              (lambda (n) 
+;                (if (zero? n) 
+;                    1 
+;                    (* n ((unbox fact) (- n 1)))))) 
+;    ((unbox fact) 10))) 
+;
 ;
 ;; Using variables instead of boxes from above
-;(let ([fact 'dummy])
-;  (set! fact
-;        (λ (n)
-;          (if (zero? n)
-;              1
-;              (* n (fact (- n 1))))))
-;  (fact 3))
+;(let ([fact 'dummy]) 
+;    (begin 
+;      (set! fact 
+;            (lambda (n) 
+;              (if (zero? n) 
+;                  1 
+;                  (* n (fact (- n 1)))))) 
+;      (fact 10))) 
+
 
 
 
