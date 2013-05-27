@@ -2,6 +2,38 @@
 ;;; Chapter 9
 ;;;
 
+;; Do Now: You’ve already seen what goes wrong when we try to use just let to define a recursive function. Try harder. Hint: Substitute more. And then some more. And more!
+;; Ans: can the above be implemented using Y Combintor: http://mvanier.livejournal.com/2897.html
+
+
+;; 9.3 Premature Observation
+
+;#lang plai
+;(let ([fact (box 'dummy)]) 
+;  (begin 
+;    (set-box! fact 
+;              (lambda (n) 
+;                (if (zero? n) 
+;                    1 
+;                    (* n ((unbox fact) (- n 1)))))) 
+;    ((unbox fact) 10))) 
+;
+; gives us a pattern of 
+; (rec name value body)
+; e.g. (rec fact 
+;     (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))) 
+;     (fact 10)) 
+;
+; this will leak the initial (placeholder) value for the public's consumption:
+;
+#lang plai-typed
+(letrec ([x x]) 
+  x) 
+; or this:
+(local ([define x x])
+  x)
+
+
 ;; 9.2 Recursive Functions
 
 
@@ -11,7 +43,6 @@
 
 ; To implement recursive functions: first create a placeholder, then refer to the placeholder where we want the cyclic reference, and finally mutate the placeholder before use
 ; To implement recursive data: first name an vacant placeholder; then mutate the placeholder so its content is itself; to obtain “itself”, use the name previously bound. Of course, we need not be limited to “self-cycles”: we can also have mutually-cyclic data (where no one element is cyclic but their combination is).
-#lang plai-typed
 
 (define-type ExprC
   [numC (n : number)] 
