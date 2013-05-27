@@ -3,6 +3,69 @@
 ;;;
 #lang plai-typed
 
+;; 12.1 Changing Representations
+
+(define-type ExprC
+  [numC (n : number)]
+  [idC (s : symbol)]
+  [appC (f : ExprC) (a : ExprC)]
+  [plusC (l : ExprC) (r : ExprC)]
+  [multC (l : ExprC) (r : ExprC)]
+  [lamC (a : symbol) (b : ExprC)])
+
+(define-type Value
+  [numV (n : number)]
+  #;[closV (arg : symbol) (body : ExprC) (env : Env)]
+  [closV (f : (Value -> Value))])
+
+(define-type Binding
+  [bind (name : symbol) (val : Value)])
+
+(define-type-alias Env (listof Binding))
+(define empty-env empty)
+(define extend-env cons)
+
+(define (lookup [s : symbol] [env : Env]) : Value
+  (if (empty? env)
+      (error 'lookup (string-append "symbol not found: " (to-string s)))
+      (if (equal? s (bind-name (first env)))
+          (bind-val (first env))
+          (lookup s (rest env)))))
+
+(define (num+ [l : Value] [r : Value]): Value
+  (if (and (numV? l) (numV? r))
+      (numV (+ (numV-n l) (numV-n r)))
+      (error 'num+ "l and/or r are not numV's")))
+
+(define (num* [l : Value] [r : Value]): Value
+  (if (and (numV? l) (numV? r))
+      (numV (* (numV-n l) (numV-n r)))
+      (error 'num* "l and/or r are not numV's")))
+
+(define (interp [expr : ExprC] [env : Env]) : Value 
+  (type-case ExprC expr 
+    [numC (n) (numV n)] 
+    [idC (n) (lookup n env)] 
+    [appC (f a) (local ([define f-value (interp f env)] 
+                        [define a-value (interp a env)]) 
+                    ((closV-f f-value) a-value))] ; ??? why are we invoking the lambda twice?!!
+    [plusC (l r) (num+ (interp l env) (interp r env))] 
+    [multC (l r) (num* (interp l env) (interp r env))] 
+    [lamC (a b) (closV (lambda (arg-val) 
+                           (interp b 
+                                 (extend-env (bind a arg-val) 
+                                             env))))])) 
+
+(test (interp (plusC (numC 10) (appC (lamC '_ (numC 5)) (numC 10))) 
+              empty-env) 
+      (numV 15)) 
+
+(test/exn (interp (appC (lamC 'x (appC (lamC 'y (plusC (idC 'x) (idC 'y))) 
+                                          (numC 4))) 
+                        (numC 3)) 
+                  empty-env) 
+          "lookup: symbol not found: 'x") 
+
 
 ;;;;
 ;;;; Chapter 9
