@@ -1,453 +1,55 @@
 ;;;
-;;; Chapter 9
+;;; Chapter 12 Representation Decisions
 ;;;
-
-;; Do Now: You’ve already seen what goes wrong when we try to use just let to define a recursive function. Try harder. Hint: Substitute more. And then some more. And more!
-;; Ans: can the above be implemented using Y Combintor: http://mvanier.livejournal.com/2897.html
-
-
-;; 9.3 Premature Observation
-
-;#lang plai
-;(let ([fact (box 'dummy)]) 
-;  (begin 
-;    (set-box! fact 
-;              (lambda (n) 
-;                (if (zero? n) 
-;                    1 
-;                    (* n ((unbox fact) (- n 1)))))) 
-;    ((unbox fact) 10))) 
-;
-; gives us a pattern of 
-; (rec name value body)
-; e.g. (rec fact 
-;     (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))) 
-;     (fact 10)) 
-;
-; this will leak the initial (placeholder) value for the public's consumption:
-;
 #lang plai-typed
-(letrec ([x x]) 
-  x) 
-; or this:
-(local ([define x x])
-  x)
-
-
-;; 9.2 Recursive Functions
-
-
-
-;; Exercise
-;; Run the equivalent program through your interpreter for boxes and make sure it produces a cyclic value. How do you check this?
-
-; To implement recursive functions: first create a placeholder, then refer to the placeholder where we want the cyclic reference, and finally mutate the placeholder before use
-; To implement recursive data: first name an vacant placeholder; then mutate the placeholder so its content is itself; to obtain “itself”, use the name previously bound. Of course, we need not be limited to “self-cycles”: we can also have mutually-cyclic data (where no one element is cyclic but their combination is).
-
-(define-type ExprC
-  [numC (n : number)] 
-  [idC (s : symbol)] 
-  [appC (fun : ExprC) (arg : ExprC)] 
-  [plusC (l : ExprC) (r : ExprC)] 
-  [multC (l : ExprC) (r : ExprC)] 
-  [lamC (arg : symbol) (body : ExprC)] 
-  [boxC (arg : ExprC)] 
-  [unboxC (arg : ExprC)] 
-  [setboxC (b : ExprC) (v : ExprC)] 
-  [seqC (b1 : ExprC) (b2 : ExprC)]
-  [if0C (i : ExprC) (t : ExprC) (e : ExprC)]) 
-
-(define-type-alias Location number)
-
-(define-type Binding
-  [bind (name : symbol) (val : Location)])
-(define-type-alias Env (listof Binding))
-(define empty-env empty)
-(define extend-env cons)
-
-(define-type Storage
-  [cell (location : Location) (val : Value)])
-(define-type-alias Store (listof Storage))
-(define empty-store empty)
-(define override-store cons)
-
-(define-type Value
-  [numV (n : number)]
-  [closV (arg : symbol) (body : ExprC) (env : Env)]
-  [boxV (l : Location)])
-
-(define-type Result
-  [v*s (v : Value) (s : Store)])
-
-
-(define new-loc
-  (let ([n (box 0)])
-    (λ ()
-      (begin
-        (set-box! n (add1 (unbox n)))
-        (unbox n)))))
-
-(define (lookup [s : symbol] [env : Env]) : Location
-  (if (empty? env)
-      (error 'lookup (string-append "symbol not found: " (to-string s)))
-      (if (symbol=? s (bind-name (first env)))
-          (bind-val (first env))
-          (lookup s (rest env)))))
-
-(define (fetch [loc : Location] [sto : Store]) : Value
-  (if (empty? sto)
-      (error 'fetch (string-append "loc not found: " (to-string loc)))
-      (if (= loc (cell-location (first sto)))
-          (cell-val (first sto))
-          (fetch loc (rest sto)))))
-
-(define (num+ [l : Value] [r : Value]) : Value
-  (if (and (numV? l) (numV? r))
-      (numV (+ (numV-n l) (numV-n r)))
-      (error 'num+ "num+ incorrect lhs and rhs type!!")))
-
-(define (num* [l : Value] [r : Value]) : Value
-  (if (and (numV? l) (numV? r))
-      (numV (* (numV-n l) (numV-n r)))
-      (error 'num* "num* incorrect lhs and rhs type!!")))
-
-
-(define (interp [expr : ExprC] [env : Env] [sto : Store]) : Result
-  (type-case ExprC expr 
-    [numC (n) (v*s 
-               (numV n) 
-               sto)] 
-    
-    [idC (n) (v*s 
-              (fetch 
-               (lookup n env) 
-               sto) 
-              sto)] 
-    
-    [appC (f a) (type-case Result (interp f env sto)
-                  [v*s (v-f s-f)
-                       (type-case Result (interp a env s-f)
-                         [v*s (v-a s-a)
-                              (let ([where (new-loc)]) 
-                                (interp (closV-body v-f) 
-                                        (extend-env (bind (closV-arg v-f) 
-                                                          where) 
-                                                    (closV-env v-f)) 
-                                        (override-store (cell where v-a) s-a)))])])]
-    
-    [plusC (l r) (type-case Result (interp l env sto)
-                   [v*s (v-l s-l)
-                        (type-case Result (interp r env s-l)
-                          [v*s (v-r s-r)
-                               (v*s (num+ v-l v-r) s-r)])])] 
-    
-    [multC (l r) (type-case Result (interp l env sto)
-                   [v*s (v-l s-l)
-                        (type-case Result (interp r env s-l)
-                          [v*s (v-r s-r) 
-                               (v*s (num* v-l v-r) s-r)])])] 
-    
-    [lamC (a b) (v*s 
-                 (closV a b env) 
-                 sto)]
-    
-    [boxC (a) (type-case Result (interp a env sto) 
-                [v*s (v-a s-a) 
-                     (let ([where (new-loc)]) 
-                       (v*s (boxV where) 
-                            (override-store (cell where v-a) 
-                                            s-a)))])] 
-    
-    [unboxC (a) (type-case Result (interp a env sto) 
-                  [v*s (v-a s-a) 
-                       (v*s (fetch (boxV-l v-a) s-a) s-a)])] 
-    
-    [setboxC (b v) (type-case Result (interp b env sto) 
-                     [v*s (v-b s-b) 
-                          (type-case Result (interp v env s-b) 
-                            [v*s (v-v s-v) 
-                                 (v*s v-v 
-                                      (override-store (cell (boxV-l v-b) 
-                                                            v-v) 
-                                                      s-v))])])] 
-    
-    [seqC (b1 b2) (type-case Result (interp b1 env sto)
-                    [v*s (v-b1 s-b1)
-                         (interp b2 env s-b1)])]
-    
-    [if0C (i t e) (type-case Result (interp i env sto)
-                    [v*s (v-i s-i)
-                         (if (= (numV-n v-i) 0)
-                             (interp t env s-i)
-                             (interp e env s-i))])]))
-
-#;((λ (x)
-   (begin
-     (set-box! x x)
-     x))
- (box 'dummy))
-
-
-; will fail with error: fact: unbound identifier in module in: fact
-#;(let ([fact (lambda (n) 
-              (if 1 
-                  n 
-                  (* n (fact (- n 1)))))]) 
-  (fact 10)) 
-
-; above desugared with same error as above: fact: unbound identifier in module in: fact
-#;((λ (fact)
-   (lambda (n) 
-              (if 1 
-                  n 
-                  (* n (fact (- n 1))))))
- (fact 10))
-
-
-(define test-if0-true (if0C (numC 3) (numC 10) (numC 299)))
-(define test-if0-false (if0C (numC 0) (numC 19) (numC 299)))
-
-(test (interp test-if0-true empty-env empty-store) (v*s (numV 299) empty-store))
-(test (interp test-if0-true empty-env empty-store) (v*s (numV 19) empty-store))
-
-(define test-cyclic-data (appC (lamC 'x (seqC (setboxC (idC 'x) (idC 'x)) (idC 'x))) (boxC (numC 123))))
-
-
-(define t (interp test-cyclic-data empty-env empty-store))
-
-; todo: is this actually cyclic??
-(test t (v*s (boxV 1) (list (cell 1 (boxV 1)) (cell 2 (boxV 1)) (cell 1 (numV 123)))))
-
-;; compile following with plai
-;#lang plai
-;
-;(let ([fact (box 'dummy)])
-;  (let ([fact-fun
-;         (λ (n)
-;           (if (zero? n)
-;               1
-;               (* n ((unbox fact) (- n 1)))))])
-;  (begin
-;    (set-box! fact fact-fun)
-;    ((unbox fact) 3))))
-;
-;; Desugaring above
-;(let ([fact (box 'dummy)]) 
-;  (begin 
-;    (set-box! fact 
-;              (lambda (n) 
-;                (if (zero? n) 
-;                    1 
-;                    (* n ((unbox fact) (- n 1)))))) 
-;    ((unbox fact) 10))) 
-;
-;
-;; Using variables instead of boxes from above
-;(let ([fact 'dummy]) 
-;    (begin 
-;      (set! fact 
-;            (lambda (n) 
-;              (if (zero? n) 
-;                  1 
-;                  (* n (fact (- n 1)))))) 
-;      (fact 10))) 
-
-
-
-
-; #lang plai
-;
-;; When the following program is Run, Racket prints this as: #0=’#&#0#. 
-;; This notation is in fact precisely what we want. 
-;; Recall that #& is how Racket prints boxes. 
-;; The #0= (and similarly for other numbers) is how Racket names pieces of cyclic data. 
-;; Thus, Racket is saying, “#0 is bound to a box whose content is #0#, i.e., 
-;;  whatever is bound to #0, i.e., itself”.
-;(let ([b (box 'dummy)])
-;  (begin 
-;    (set-box! b b)
-;    b))
-;
-;
-;
-;;;
-;#lang plai-typed
-;
-;(define-type ExprC
-;  [numC (n : number)] 
-;  [varC (s : symbol)] 
-;  [appC (fun : ExprC) (arg : ExprC)] 
-;  [plusC (l : ExprC) (r : ExprC)] 
-;  [multC (l : ExprC) (r : ExprC)] 
-;  [lamC (arg : symbol) (body : ExprC)] 
-;  [setC (var : symbol) (arg : ExprC)] 
-;  [seqC (b1 : ExprC) (b2 : ExprC)]
-;  [treeC (val : 'a) (left : ExprC) (right : ExprC)]
-;  [listC (val : 'a) (next : ExprC)])
-;
-;(define my-list (listC 1 (listC 3 (listC 5 (listC 6 (numC 0))))))
-;(define node1 (treeC 'abc (numC 0) (numC 0)))
-;(define node2 (treeC 'xyz (numC 0) (numC 0)))
-;(define node3 (treeC 'def node1 node2))
-;(define my-tree (treeC 'uvw node3 (treeC '_ (numC 0) (numC 0))))
-;
-;my-list
-;my-tree
-;
-;; won't work since b is undefined
-;#;(let ([b b])
-;  b)
-;; the above desugared
-;#;((λ (b)
-;  b)
-; b)
-;; or even
-;#;((λ (x)
-;   x)
-; b)
-;
-;;we need to first create a “place” for the datum, then refer to that place within itself. The use of “then”—i.e., the introduction of time—should suggest a mutation operation.
-;;Note that this program will not run in Typed PLAI as written. We’ll return to typing such programs later [REF]. For now, run it in the untyped (#lang plai) language.;(let ([b (box 'dummy)])
-;(let ([b (box 'dummy)])
-;  (begin 
-;    (set-box! b b)
-;    b))
-;
 
 
 ;;;;
-;;;; Chapter 8
+;;;; Chapter 9
 ;;;;
 ;
+;;; Do Now: You’ve already seen what goes wrong when we try to use just let to define a recursive function. Try harder. Hint: Substitute more. And then some more. And more!
+;;; Ans: can the above be implemented using Y Combintor: http://mvanier.livejournal.com/2897.html
+;
+;
+;;; 9.3 Premature Observation
+;
+;;#lang plai
+;;(let ([fact (box 'dummy)]) 
+;;  (begin 
+;;    (set-box! fact 
+;;              (lambda (n) 
+;;                (if (zero? n) 
+;;                    1 
+;;                    (* n ((unbox fact) (- n 1)))))) 
+;;    ((unbox fact) 10))) 
+;;
+;; gives us a pattern of 
+;; (rec name value body)
+;; e.g. (rec fact 
+;;     (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))) 
+;;     (fact 10)) 
+;;
+;; this will leak the initial (placeholder) value for the public's consumption:
+;;
 ;#lang plai-typed
-;
-;;; using variables (i.e. variable mutation )
-;(define-type ExprC
-;  [numC (n : number)] 
-;  [varC (s : symbol)] 
-;  [appC (fun : ExprC) (arg : ExprC)] 
-;  [plusC (l : ExprC) (r : ExprC)] 
-;  [multC (l : ExprC) (r : ExprC)] 
-;  [lamC (arg : symbol) (body : ExprC)] 
-;  [setC (var : symbol) (arg : ExprC)] 
-;  [seqC (b1 : ExprC) (b2 : ExprC)]) 
-;
-;(define-type Value
-;  [numV (n : number)]
-;  [closV (arg : symbol) (body : ExprC) (env : Env)])
-;
-;(define-type-alias Location number)
-;
-;(define-type Binding
-;  [bind (name : symbol) (val : Location)])
-;(define-type-alias Env (listof Binding))
-;(define empty-env empty)
-;(define extend-env cons)
-;
-;(define-type Storage
-;  [cell (location : Location) (val : Value)])
-;(define-type-alias Store (listof Storage))
-;(define empty-store empty)
-;(define override-store cons)
-;
-;(define-type Result
-;  [v*s (v : Value) (s : Store)])
+;(letrec ([x x]) 
+;  x) 
+;; or this:
+;(local ([define x x])
+;  x)
 ;
 ;
-;(define new-loc
-;  (let ([n (box 0)])
-;    (λ ()
-;      (begin
-;        (set-box! n (add1 (unbox n)))
-;        (unbox n)))))
+;;; 9.2 Recursive Functions
 ;
-;(define (lookup [s : symbol] [env : Env]) : Location
-;  (if (empty? env)
-;      (error 'lookup (string-append "symbol not found: " (to-string s)))
-;      (if (symbol=? s (bind-name (first env)))
-;          (bind-val (first env))
-;          (lookup s (rest env)))))
 ;
-;(define (fetch [loc : Location] [sto : Store]) : Value
-;  (if (empty? sto)
-;      (error 'fetch (string-append "loc not found: " (to-string loc)))
-;      (if (= loc (cell-location (first sto)))
-;          (cell-val (first sto))
-;          (fetch loc (rest sto)))))
 ;
-;(define (num+ [l : Value] [r : Value]) : Value
-;  (if (and (numV? l) (numV? r))
-;      (numV (+ (numV-n l) (numV-n r)))
-;      (error 'num+ "num+ incorrect lhs and rhs type!!")))
+;;; Exercise
+;;; Run the equivalent program through your interpreter for boxes and make sure it produces a cyclic value. How do you check this?
 ;
-;(define (num* [l : Value] [r : Value]) : Value
-;  (if (and (numV? l) (numV? r))
-;      (numV (* (numV-n l) (numV-n r)))
-;      (error 'num* "num* incorrect lhs and rhs type!!")))
+;; To implement recursive functions: first create a placeholder, then refer to the placeholder where we want the cyclic reference, and finally mutate the placeholder before use
+;; To implement recursive data: first name an vacant placeholder; then mutate the placeholder so its content is itself; to obtain “itself”, use the name previously bound. Of course, we need not be limited to “self-cycles”: we can also have mutually-cyclic data (where no one element is cyclic but their combination is).
 ;
-;(define (interp [expr : ExprC] [env : Env] [sto : Store]) : Result
-;  (type-case ExprC expr 
-;    [numC (n) (v*s 
-;               (numV n) 
-;               sto)] 
-;    
-;    [varC (n) (v*s 
-;               (fetch 
-;                (lookup n env) 
-;                sto) 
-;               sto)] 
-;    
-;    [appC (f a) (type-case Result (interp f env sto)
-;                  [v*s (v-f s-f)
-;                       (type-case Result (interp a env s-f)
-;                         [v*s (v-a s-a)
-;                              (let ([where (new-loc)]) 
-;                                (interp (closV-body v-f) 
-;                                        (extend-env (bind (closV-arg v-f) 
-;                                                          where) 
-;                                                    (closV-env v-f)) 
-;                                        (override-store (cell where v-a) s-a)))])])]
-;    
-;    [plusC (l r) (type-case Result (interp l env sto)
-;                   [v*s (v-l s-l)
-;                        (type-case Result (interp r env s-l)
-;                          [v*s (v-r s-r)
-;                               (v*s (num+ v-l v-r) s-r)])])] 
-;    
-;    [multC (l r) (type-case Result (interp l env sto)
-;                   [v*s (v-l s-l)
-;                        (type-case Result (interp r env s-l)
-;                          [v*s (v-r s-r) 
-;                               (v*s (num* v-l v-r) s-r)])])] 
-;    
-;    [lamC (a b) (v*s 
-;                 (closV a b env) 
-;                 sto)]
-;    
-;    [setC (var val) (type-case Result (interp val env sto)
-;                      [v*s (v-val s-val)
-;                           (let ([where (lookup var env)])
-;                             (v*s v-val
-;                                  (override-store 
-;                                   (cell where v-val)
-;                                   s-val)))])]
-;    
-;    [seqC (b1 b2) (type-case Result (interp b1 env sto)
-;                    [v*s (v-b1 s-b1)
-;                         (interp b2 env s-b1)])]
-;    
-;    ))
-;
-;(test (interp (appC
-;           (lamC 
-;           'x 
-;           (plusC (setC 'x (numC 10)) (numC 100))) 
-;           (numC 50))
-;          empty-env 
-;          empty-store)
-;      (v*s (numV 110) (list (cell 1 (numV 10)) (cell 1 (numV 50)))))
-;
-;;; using identifiers (i.e. structure mutation )
 ;(define-type ExprC
 ;  [numC (n : number)] 
 ;  [idC (s : symbol)] 
@@ -458,7 +60,8 @@
 ;  [boxC (arg : ExprC)] 
 ;  [unboxC (arg : ExprC)] 
 ;  [setboxC (b : ExprC) (v : ExprC)] 
-;  [seqC (b1 : ExprC) (b2 : ExprC)]) 
+;  [seqC (b1 : ExprC) (b2 : ExprC)]
+;  [if0C (i : ExprC) (t : ExprC) (e : ExprC)]) 
 ;
 ;(define-type-alias Location number)
 ;
@@ -578,28 +181,431 @@
 ;                    [v*s (v-b1 s-b1)
 ;                         (interp b2 env s-b1)])]
 ;    
-;    ))
+;    [if0C (i t e) (type-case Result (interp i env sto)
+;                    [v*s (v-i s-i)
+;                         (if (= (numV-n v-i) 0)
+;                             (interp t env s-i)
+;                             (interp e env s-i))])]))
 ;
-;; todo: Define begin by desugaring into let (and hence into lambda).
-;; todo: Implement the other version of store alteration, whereby we update an existing binding and thereby avoid multiple bindings for a location in the store.
-;; todo: It’s a useful exercise to try to limit the use of store locations only to boxes. How many changes would you need to make?
-;; todo: Go through the interpreter; replace every reference to an updated store with a reference to one before update; make sure your test cases catch all the introduced errors!
-;; todo: Augment the language with the journal features of software transactional memory journal.
-;; todo: An alternate implementation strategy is to have the environment map names to boxed Values. We don’t do it here because it: (a) would be cheating, (b) wouldn’t tell us how to implement the same feature in a language without boxes, (c) doesn’t necessarily carry over to other mutation operations, and (d) most of all, doesn’t really give us insight into what is happening here. It is nevertheless useful to understand, not least because you may find it a useful strategy to adopt when implementing your own language. Therefore, alter the implementation to obey this strategy. Do you still need store-passing style? Why or why not?
+;#;((λ (x)
+;   (begin
+;     (set-box! x x)
+;     x))
+; (box 'dummy))
 ;
 ;
-;(define test1 (plusC (unboxC (boxC (numC 10))) (numC 9)))
-;(define test2-seqC-take1 (seqC (plusC (numC 1) (numC 2)) (boxC (numC 100))))
-;(define test3-seqC-take1 (seqC (boxC (numC 100)) (plusC (numC 1) (numC 2))))
-;(define test4-seqC-take2 (seqC (plusC (numC 1) (numC 2)) (multC (numC 100) (numC 3))))
-;(define test5-seqC-take2 (seqC (multC (numC 100) (numC 3)) (plusC (numC 1) (numC 2))))
+;; will fail with error: fact: unbound identifier in module in: fact
+;#;(let ([fact (lambda (n) 
+;              (if 1 
+;                  n 
+;                  (* n (fact (- n 1)))))]) 
+;  (fact 10)) 
 ;
-;(test (interp test1 empty-env empty-store) (v*s (numV 19) (list (cell 1 (numV 10)))))
-;(test (interp test2-seqC-take1 empty-env empty-store) (v*s (boxV 2) (list (cell 2 (numV 100)))))
-;(test (interp test3-seqC-take1 empty-env empty-store) (v*s (numV 3) (list (cell 3 (numV 100)))))
-;(test (interp test4-seqC-take2 empty-env empty-store) (v*s (numV 300) empty-store))
-;(test (interp test5-seqC-take2 empty-env empty-store) (v*s (numV 3) empty-store))
-
+;; above desugared with same error as above: fact: unbound identifier in module in: fact
+;#;((λ (fact)
+;   (lambda (n) 
+;              (if 1 
+;                  n 
+;                  (* n (fact (- n 1))))))
+; (fact 10))
+;
+;
+;(define test-if0-true (if0C (numC 3) (numC 10) (numC 299)))
+;(define test-if0-false (if0C (numC 0) (numC 19) (numC 299)))
+;
+;(test (interp test-if0-true empty-env empty-store) (v*s (numV 299) empty-store))
+;(test (interp test-if0-true empty-env empty-store) (v*s (numV 19) empty-store))
+;
+;(define test-cyclic-data (appC (lamC 'x (seqC (setboxC (idC 'x) (idC 'x)) (idC 'x))) (boxC (numC 123))))
+;
+;
+;(define t (interp test-cyclic-data empty-env empty-store))
+;
+;; todo: is this actually cyclic??
+;(test t (v*s (boxV 1) (list (cell 1 (boxV 1)) (cell 2 (boxV 1)) (cell 1 (numV 123)))))
+;
+;;; compile following with plai
+;;#lang plai
+;;
+;;(let ([fact (box 'dummy)])
+;;  (let ([fact-fun
+;;         (λ (n)
+;;           (if (zero? n)
+;;               1
+;;               (* n ((unbox fact) (- n 1)))))])
+;;  (begin
+;;    (set-box! fact fact-fun)
+;;    ((unbox fact) 3))))
+;;
+;;; Desugaring above
+;;(let ([fact (box 'dummy)]) 
+;;  (begin 
+;;    (set-box! fact 
+;;              (lambda (n) 
+;;                (if (zero? n) 
+;;                    1 
+;;                    (* n ((unbox fact) (- n 1)))))) 
+;;    ((unbox fact) 10))) 
+;;
+;;
+;;; Using variables instead of boxes from above
+;;(let ([fact 'dummy]) 
+;;    (begin 
+;;      (set! fact 
+;;            (lambda (n) 
+;;              (if (zero? n) 
+;;                  1 
+;;                  (* n (fact (- n 1)))))) 
+;;      (fact 10))) 
+;
+;
+;
+;
+;; #lang plai
+;;
+;;; When the following program is Run, Racket prints this as: #0=’#&#0#. 
+;;; This notation is in fact precisely what we want. 
+;;; Recall that #& is how Racket prints boxes. 
+;;; The #0= (and similarly for other numbers) is how Racket names pieces of cyclic data. 
+;;; Thus, Racket is saying, “#0 is bound to a box whose content is #0#, i.e., 
+;;;  whatever is bound to #0, i.e., itself”.
+;;(let ([b (box 'dummy)])
+;;  (begin 
+;;    (set-box! b b)
+;;    b))
+;;
+;;
+;;
+;;;;
+;;#lang plai-typed
+;;
+;;(define-type ExprC
+;;  [numC (n : number)] 
+;;  [varC (s : symbol)] 
+;;  [appC (fun : ExprC) (arg : ExprC)] 
+;;  [plusC (l : ExprC) (r : ExprC)] 
+;;  [multC (l : ExprC) (r : ExprC)] 
+;;  [lamC (arg : symbol) (body : ExprC)] 
+;;  [setC (var : symbol) (arg : ExprC)] 
+;;  [seqC (b1 : ExprC) (b2 : ExprC)]
+;;  [treeC (val : 'a) (left : ExprC) (right : ExprC)]
+;;  [listC (val : 'a) (next : ExprC)])
+;;
+;;(define my-list (listC 1 (listC 3 (listC 5 (listC 6 (numC 0))))))
+;;(define node1 (treeC 'abc (numC 0) (numC 0)))
+;;(define node2 (treeC 'xyz (numC 0) (numC 0)))
+;;(define node3 (treeC 'def node1 node2))
+;;(define my-tree (treeC 'uvw node3 (treeC '_ (numC 0) (numC 0))))
+;;
+;;my-list
+;;my-tree
+;;
+;;; won't work since b is undefined
+;;#;(let ([b b])
+;;  b)
+;;; the above desugared
+;;#;((λ (b)
+;;  b)
+;; b)
+;;; or even
+;;#;((λ (x)
+;;   x)
+;; b)
+;;
+;;;we need to first create a “place” for the datum, then refer to that place within itself. The use of “then”—i.e., the introduction of time—should suggest a mutation operation.
+;;;Note that this program will not run in Typed PLAI as written. We’ll return to typing such programs later [REF]. For now, run it in the untyped (#lang plai) language.;(let ([b (box 'dummy)])
+;;(let ([b (box 'dummy)])
+;;  (begin 
+;;    (set-box! b b)
+;;    b))
+;;
+;
+;
+;;;;;
+;;;;; Chapter 8
+;;;;;
+;;
+;;#lang plai-typed
+;;
+;;;; using variables (i.e. variable mutation )
+;;(define-type ExprC
+;;  [numC (n : number)] 
+;;  [varC (s : symbol)] 
+;;  [appC (fun : ExprC) (arg : ExprC)] 
+;;  [plusC (l : ExprC) (r : ExprC)] 
+;;  [multC (l : ExprC) (r : ExprC)] 
+;;  [lamC (arg : symbol) (body : ExprC)] 
+;;  [setC (var : symbol) (arg : ExprC)] 
+;;  [seqC (b1 : ExprC) (b2 : ExprC)]) 
+;;
+;;(define-type Value
+;;  [numV (n : number)]
+;;  [closV (arg : symbol) (body : ExprC) (env : Env)])
+;;
+;;(define-type-alias Location number)
+;;
+;;(define-type Binding
+;;  [bind (name : symbol) (val : Location)])
+;;(define-type-alias Env (listof Binding))
+;;(define empty-env empty)
+;;(define extend-env cons)
+;;
+;;(define-type Storage
+;;  [cell (location : Location) (val : Value)])
+;;(define-type-alias Store (listof Storage))
+;;(define empty-store empty)
+;;(define override-store cons)
+;;
+;;(define-type Result
+;;  [v*s (v : Value) (s : Store)])
+;;
+;;
+;;(define new-loc
+;;  (let ([n (box 0)])
+;;    (λ ()
+;;      (begin
+;;        (set-box! n (add1 (unbox n)))
+;;        (unbox n)))))
+;;
+;;(define (lookup [s : symbol] [env : Env]) : Location
+;;  (if (empty? env)
+;;      (error 'lookup (string-append "symbol not found: " (to-string s)))
+;;      (if (symbol=? s (bind-name (first env)))
+;;          (bind-val (first env))
+;;          (lookup s (rest env)))))
+;;
+;;(define (fetch [loc : Location] [sto : Store]) : Value
+;;  (if (empty? sto)
+;;      (error 'fetch (string-append "loc not found: " (to-string loc)))
+;;      (if (= loc (cell-location (first sto)))
+;;          (cell-val (first sto))
+;;          (fetch loc (rest sto)))))
+;;
+;;(define (num+ [l : Value] [r : Value]) : Value
+;;  (if (and (numV? l) (numV? r))
+;;      (numV (+ (numV-n l) (numV-n r)))
+;;      (error 'num+ "num+ incorrect lhs and rhs type!!")))
+;;
+;;(define (num* [l : Value] [r : Value]) : Value
+;;  (if (and (numV? l) (numV? r))
+;;      (numV (* (numV-n l) (numV-n r)))
+;;      (error 'num* "num* incorrect lhs and rhs type!!")))
+;;
+;;(define (interp [expr : ExprC] [env : Env] [sto : Store]) : Result
+;;  (type-case ExprC expr 
+;;    [numC (n) (v*s 
+;;               (numV n) 
+;;               sto)] 
+;;    
+;;    [varC (n) (v*s 
+;;               (fetch 
+;;                (lookup n env) 
+;;                sto) 
+;;               sto)] 
+;;    
+;;    [appC (f a) (type-case Result (interp f env sto)
+;;                  [v*s (v-f s-f)
+;;                       (type-case Result (interp a env s-f)
+;;                         [v*s (v-a s-a)
+;;                              (let ([where (new-loc)]) 
+;;                                (interp (closV-body v-f) 
+;;                                        (extend-env (bind (closV-arg v-f) 
+;;                                                          where) 
+;;                                                    (closV-env v-f)) 
+;;                                        (override-store (cell where v-a) s-a)))])])]
+;;    
+;;    [plusC (l r) (type-case Result (interp l env sto)
+;;                   [v*s (v-l s-l)
+;;                        (type-case Result (interp r env s-l)
+;;                          [v*s (v-r s-r)
+;;                               (v*s (num+ v-l v-r) s-r)])])] 
+;;    
+;;    [multC (l r) (type-case Result (interp l env sto)
+;;                   [v*s (v-l s-l)
+;;                        (type-case Result (interp r env s-l)
+;;                          [v*s (v-r s-r) 
+;;                               (v*s (num* v-l v-r) s-r)])])] 
+;;    
+;;    [lamC (a b) (v*s 
+;;                 (closV a b env) 
+;;                 sto)]
+;;    
+;;    [setC (var val) (type-case Result (interp val env sto)
+;;                      [v*s (v-val s-val)
+;;                           (let ([where (lookup var env)])
+;;                             (v*s v-val
+;;                                  (override-store 
+;;                                   (cell where v-val)
+;;                                   s-val)))])]
+;;    
+;;    [seqC (b1 b2) (type-case Result (interp b1 env sto)
+;;                    [v*s (v-b1 s-b1)
+;;                         (interp b2 env s-b1)])]
+;;    
+;;    ))
+;;
+;;(test (interp (appC
+;;           (lamC 
+;;           'x 
+;;           (plusC (setC 'x (numC 10)) (numC 100))) 
+;;           (numC 50))
+;;          empty-env 
+;;          empty-store)
+;;      (v*s (numV 110) (list (cell 1 (numV 10)) (cell 1 (numV 50)))))
+;;
+;;;; using identifiers (i.e. structure mutation )
+;;(define-type ExprC
+;;  [numC (n : number)] 
+;;  [idC (s : symbol)] 
+;;  [appC (fun : ExprC) (arg : ExprC)] 
+;;  [plusC (l : ExprC) (r : ExprC)] 
+;;  [multC (l : ExprC) (r : ExprC)] 
+;;  [lamC (arg : symbol) (body : ExprC)] 
+;;  [boxC (arg : ExprC)] 
+;;  [unboxC (arg : ExprC)] 
+;;  [setboxC (b : ExprC) (v : ExprC)] 
+;;  [seqC (b1 : ExprC) (b2 : ExprC)]) 
+;;
+;;(define-type-alias Location number)
+;;
+;;(define-type Binding
+;;  [bind (name : symbol) (val : Location)])
+;;(define-type-alias Env (listof Binding))
+;;(define empty-env empty)
+;;(define extend-env cons)
+;;
+;;(define-type Storage
+;;  [cell (location : Location) (val : Value)])
+;;(define-type-alias Store (listof Storage))
+;;(define empty-store empty)
+;;(define override-store cons)
+;;
+;;(define-type Value
+;;  [numV (n : number)]
+;;  [closV (arg : symbol) (body : ExprC) (env : Env)]
+;;  [boxV (l : Location)])
+;;
+;;(define-type Result
+;;  [v*s (v : Value) (s : Store)])
+;;
+;;
+;;(define new-loc
+;;  (let ([n (box 0)])
+;;    (λ ()
+;;      (begin
+;;        (set-box! n (add1 (unbox n)))
+;;        (unbox n)))))
+;;
+;;(define (lookup [s : symbol] [env : Env]) : Location
+;;  (if (empty? env)
+;;      (error 'lookup (string-append "symbol not found: " (to-string s)))
+;;      (if (symbol=? s (bind-name (first env)))
+;;          (bind-val (first env))
+;;          (lookup s (rest env)))))
+;;
+;;(define (fetch [loc : Location] [sto : Store]) : Value
+;;  (if (empty? sto)
+;;      (error 'fetch (string-append "loc not found: " (to-string loc)))
+;;      (if (= loc (cell-location (first sto)))
+;;          (cell-val (first sto))
+;;          (fetch loc (rest sto)))))
+;;
+;;(define (num+ [l : Value] [r : Value]) : Value
+;;  (if (and (numV? l) (numV? r))
+;;      (numV (+ (numV-n l) (numV-n r)))
+;;      (error 'num+ "num+ incorrect lhs and rhs type!!")))
+;;
+;;(define (num* [l : Value] [r : Value]) : Value
+;;  (if (and (numV? l) (numV? r))
+;;      (numV (* (numV-n l) (numV-n r)))
+;;      (error 'num* "num* incorrect lhs and rhs type!!")))
+;;
+;;
+;;(define (interp [expr : ExprC] [env : Env] [sto : Store]) : Result
+;;  (type-case ExprC expr 
+;;    [numC (n) (v*s 
+;;               (numV n) 
+;;               sto)] 
+;;    
+;;    [idC (n) (v*s 
+;;              (fetch 
+;;               (lookup n env) 
+;;               sto) 
+;;              sto)] 
+;;    
+;;    [appC (f a) (type-case Result (interp f env sto)
+;;                  [v*s (v-f s-f)
+;;                       (type-case Result (interp a env s-f)
+;;                         [v*s (v-a s-a)
+;;                              (let ([where (new-loc)]) 
+;;                                (interp (closV-body v-f) 
+;;                                        (extend-env (bind (closV-arg v-f) 
+;;                                                          where) 
+;;                                                    (closV-env v-f)) 
+;;                                        (override-store (cell where v-a) s-a)))])])]
+;;    
+;;    [plusC (l r) (type-case Result (interp l env sto)
+;;                   [v*s (v-l s-l)
+;;                        (type-case Result (interp r env s-l)
+;;                          [v*s (v-r s-r)
+;;                               (v*s (num+ v-l v-r) s-r)])])] 
+;;    
+;;    [multC (l r) (type-case Result (interp l env sto)
+;;                   [v*s (v-l s-l)
+;;                        (type-case Result (interp r env s-l)
+;;                          [v*s (v-r s-r) 
+;;                               (v*s (num* v-l v-r) s-r)])])] 
+;;    
+;;    [lamC (a b) (v*s 
+;;                 (closV a b env) 
+;;                 sto)]
+;;    
+;;    [boxC (a) (type-case Result (interp a env sto) 
+;;                [v*s (v-a s-a) 
+;;                     (let ([where (new-loc)]) 
+;;                       (v*s (boxV where) 
+;;                            (override-store (cell where v-a) 
+;;                                            s-a)))])] 
+;;    
+;;    [unboxC (a) (type-case Result (interp a env sto) 
+;;                  [v*s (v-a s-a) 
+;;                       (v*s (fetch (boxV-l v-a) s-a) s-a)])] 
+;;    
+;;    [setboxC (b v) (type-case Result (interp b env sto) 
+;;                     [v*s (v-b s-b) 
+;;                          (type-case Result (interp v env s-b) 
+;;                            [v*s (v-v s-v) 
+;;                                 (v*s v-v 
+;;                                      (override-store (cell (boxV-l v-b) 
+;;                                                            v-v) 
+;;                                                      s-v))])])] 
+;;    
+;;    [seqC (b1 b2) (type-case Result (interp b1 env sto)
+;;                    [v*s (v-b1 s-b1)
+;;                         (interp b2 env s-b1)])]
+;;    
+;;    ))
+;;
+;;; todo: Define begin by desugaring into let (and hence into lambda).
+;;; todo: Implement the other version of store alteration, whereby we update an existing binding and thereby avoid multiple bindings for a location in the store.
+;;; todo: It’s a useful exercise to try to limit the use of store locations only to boxes. How many changes would you need to make?
+;;; todo: Go through the interpreter; replace every reference to an updated store with a reference to one before update; make sure your test cases catch all the introduced errors!
+;;; todo: Augment the language with the journal features of software transactional memory journal.
+;;; todo: An alternate implementation strategy is to have the environment map names to boxed Values. We don’t do it here because it: (a) would be cheating, (b) wouldn’t tell us how to implement the same feature in a language without boxes, (c) doesn’t necessarily carry over to other mutation operations, and (d) most of all, doesn’t really give us insight into what is happening here. It is nevertheless useful to understand, not least because you may find it a useful strategy to adopt when implementing your own language. Therefore, alter the implementation to obey this strategy. Do you still need store-passing style? Why or why not?
+;;
+;;
+;;(define test1 (plusC (unboxC (boxC (numC 10))) (numC 9)))
+;;(define test2-seqC-take1 (seqC (plusC (numC 1) (numC 2)) (boxC (numC 100))))
+;;(define test3-seqC-take1 (seqC (boxC (numC 100)) (plusC (numC 1) (numC 2))))
+;;(define test4-seqC-take2 (seqC (plusC (numC 1) (numC 2)) (multC (numC 100) (numC 3))))
+;;(define test5-seqC-take2 (seqC (multC (numC 100) (numC 3)) (plusC (numC 1) (numC 2))))
+;;
+;;(test (interp test1 empty-env empty-store) (v*s (numV 19) (list (cell 1 (numV 10)))))
+;;(test (interp test2-seqC-take1 empty-env empty-store) (v*s (boxV 2) (list (cell 2 (numV 100)))))
+;;(test (interp test3-seqC-take1 empty-env empty-store) (v*s (numV 3) (list (cell 3 (numV 100)))))
+;;(test (interp test4-seqC-take2 empty-env empty-store) (v*s (numV 300) empty-store))
+;;(test (interp test5-seqC-take2 empty-env empty-store) (v*s (numV 3) empty-store))
+;
 ;;;;
 ;;;; Chapter 7
 ;;;;
