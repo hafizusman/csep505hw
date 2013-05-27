@@ -2,10 +2,15 @@
 ;;; Chapter 9
 ;;;
 
+;; 9.2 Recursive Functions
+
+
+
 ;; Exercise
 ;; Run the equivalent program through your interpreter for boxes and make sure it produces a cyclic value. How do you check this?
 
-; The central idea is this two-step process: first name an vacant placeholder; then mutate the placeholder so its content is itself; to obtain “itself”, use the name previously bound. Of course, we need not be limited to “self-cycles”: we can also have mutually-cyclic data (where no one element is cyclic but their combination is).
+; To implement recursive functions: first create a placeholder, then refer to the placeholder where we want the cyclic reference, and finally mutate the placeholder before use
+; To implement recursive data: first name an vacant placeholder; then mutate the placeholder so its content is itself; to obtain “itself”, use the name previously bound. Of course, we need not be limited to “self-cycles”: we can also have mutually-cyclic data (where no one element is cyclic but their combination is).
 #lang plai-typed
 
 (define-type ExprC
@@ -18,7 +23,8 @@
   [boxC (arg : ExprC)] 
   [unboxC (arg : ExprC)] 
   [setboxC (b : ExprC) (v : ExprC)] 
-  [seqC (b1 : ExprC) (b2 : ExprC)]) 
+  [seqC (b1 : ExprC) (b2 : ExprC)]
+  [if0C (i : ExprC) (t : ExprC) (e : ExprC)]) 
 
 (define-type-alias Location number)
 
@@ -138,7 +144,11 @@
                     [v*s (v-b1 s-b1)
                          (interp b2 env s-b1)])]
     
-    ))
+    [if0C (i t e) (type-case Result (interp i env sto)
+                    [v*s (v-i s-i)
+                         (if (= (numV-n v-i) 0)
+                             (interp t env s-i)
+                             (interp e env s-i))])]))
 
 #;((λ (x)
    (begin
@@ -147,15 +157,72 @@
  (box 'dummy))
 
 
+; will fail with error: fact: unbound identifier in module in: fact
+#;(let ([fact (lambda (n) 
+              (if 1 
+                  n 
+                  (* n (fact (- n 1)))))]) 
+  (fact 10)) 
+
+; above desugared with same error as above: fact: unbound identifier in module in: fact
+#;((λ (fact)
+   (lambda (n) 
+              (if 1 
+                  n 
+                  (* n (fact (- n 1))))))
+ (fact 10))
+
+
+(define test-if0-true (if0C (numC 3) (numC 10) (numC 299)))
+(define test-if0-false (if0C (numC 0) (numC 19) (numC 299)))
+
+(test (interp test-if0-true empty-env empty-store) (v*s (numV 299) empty-store))
+(test (interp test-if0-true empty-env empty-store) (v*s (numV 19) empty-store))
+
 (define test-cyclic-data (appC (lamC 'x (seqC (setboxC (idC 'x) (idC 'x)) (idC 'x))) (boxC (numC 123))))
+
+
 (define t (interp test-cyclic-data empty-env empty-store))
 
 ; todo: is this actually cyclic??
 (test t (v*s (boxV 1) (list (cell 1 (boxV 1)) (cell 2 (boxV 1)) (cell 1 (numV 123)))))
 
+;; compile following with plai
+;#lang plai
+;
+;(let ([fact (box 'dummy)])
+;  (let ([fact-fun
+;         (λ (n)
+;           (if (zero? n)
+;               1
+;               (* n ((unbox fact) (- n 1)))))])
+;  (begin
+;    (set-box! fact fact-fun)
+;    ((unbox fact) 3))))
+;
+;; Desugaring above
+;(let ([fact (box 'dummy)])
+;  (set-box! fact
+;            (λ (n)
+;              (if (zero? n)
+;                  1
+;                  (* n ((unbox fact) (- n 1))))))
+;  ((unbox fact) 3))
+;
+;; Using variables instead of boxes from above
+;(let ([fact 'dummy])
+;  (set! fact
+;        (λ (n)
+;          (if (zero? n)
+;              1
+;              (* n (fact (- n 1))))))
+;  (fact 3))
+
+
+
 ; #lang plai
 ;
-;; When the above program is Run, Racket prints this as: #0=’#&#0#. 
+;; When the following program is Run, Racket prints this as: #0=’#&#0#. 
 ;; This notation is in fact precisely what we want. 
 ;; Recall that #& is how Racket prints boxes. 
 ;; The #0= (and similarly for other numbers) is how Racket names pieces of cyclic data. 
