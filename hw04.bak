@@ -102,17 +102,6 @@
     [else (error 'parse (string-append "syntax error in " (to-string s-exp)))]))
  
 
-(define (num+ [l : Value] [r : Value]) : Value
-  (if (and (numV? l) (numV? r))
-      (numV (+ (numV-value l) (numV-value r)))
-      (error 'num+ "num+ incorrect lhs and rhs type!!")))
-
-(define (num* [l : Value] [r : Value]) : Value
-  (if (and (numV? l) (numV? r))
-      (numV (* (numV-value l) (numV-value r)))
-      (error 'num* "num* incorrect lhs and rhs type!!")))
-
-
 
 (define (interp [expr : Expr] 
                 [env : (Env Value)]) : Value 
