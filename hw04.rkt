@@ -110,13 +110,17 @@
 (define (num+ [l : Value] [r : Value]) : Value
   (if (and (numV? l) (numV? r))
       (numV (+ (numV-value l) (numV-value r)))
-      (error 'num+ "num+ incorrect lhs and rhs type!!")))
+      (error 'num+ "num+ incorrect lhs and/or rhs type!!")))
 
 (define (num* [l : Value] [r : Value]) : Value
   (if (and (numV? l) (numV? r))
       (numV (* (numV-value l) (numV-value r)))
-      (error 'num* "num* incorrect lhs and rhs type!!")))
+      (error 'num* "num* incorrect lhs and/or rhs type!!")))
 
+(define (num- [l : Value] [r : Value]) : Value
+  (if (and (numV? l) (numV? r))
+      (numV (- (numV-value l) (numV-value r)))
+      (error 'num+ "num- incorrect lhs and/or rhs type!!")))
 
 
 (define (interp [expr : Expr] 
@@ -126,22 +130,13 @@
           (numV value)]
     
     [addE (lhs rhs) 
-          (numV (+ 
-                 (type-case Value (interp lhs env)
-                   [numV (value) value]
-                   [else (error 'interp "unexpected lhs type +!")])
-                 (type-case Value (interp rhs env)
-                   [numV (value) value]
-                   [else (error 'interp "unexpected rhs type +!")])))]
+          (num+ (interp lhs env) (interp rhs env))]
     
     [mulE (lhs rhs) 
-          (numV (* 
-                 (type-case Value (interp lhs env)
-                   [numV (value) value]
-                   [else (error 'interp "unexpected lhs type *!")])
-                 (type-case Value (interp rhs env)
-                   [numV (value) value]
-                   [else (error 'interp "unexpected rhs type *!")])))] 
+          (num* (interp lhs env) (interp rhs env))] 
+
+    [subE (lhs rhs) 
+          (num- (interp lhs env) (interp rhs env))] 
     
     [varE (name)
           (type-case (optionof Value) (lookup name env) 
@@ -167,13 +162,18 @@
     
     [recE (name value) (error 'interp "TODO recE\n")]
     
-    [subE (lhs rhs) (error 'interp "TODO subE\n")]))
+))
 
 
 ; A 'with' expression binds a value to a variable within its body. 
 (define test-with-expr 
   '(with (x (+ 1 2)) 
          (* x 3))) ; => 9 
+
+; A 'with' expression binds a value to a variable within its body. 
+(define test-with-expr-2
+  '(with (x (- 2 1)) 
+         (* x 3))) ; => 3 
 
 ; A 'fun' (function) abstracts a body over a variable. 
 (define test-funD-expr 
@@ -200,6 +200,7 @@
                (+ (f 8) (f (f 2)))))) ; => 42 
 
 (test (interp (parse test-with-expr) empty-env) (numV 9))
+(test (interp (parse test-with-expr-2) empty-env) (numV 3))
 (test (interp (parse test-funA-expr) empty-env) (numV 25))
 (test/exn (interp (parse test-funA-expr-2) empty-env) "interp: unbound variable 'y")
 (test (interp (parse test-funwith-expr) empty-env) (numV 42))
