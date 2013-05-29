@@ -47,6 +47,8 @@
         (rhs : Expr)] ; an addition expression
   [mulE (lhs : Expr) 
         (rhs : Expr)] ; a multiplication expression 
+  [subE (lhs : Expr) 
+        (rhs : Expr)] ; a subtraction expression 
   [varE (name : symbol)] ; A variable reference. 
   [funE (var : symbol) ; The name of the function arguments. 
         (body : Expr)] ; The body of the function. 
@@ -57,7 +59,9 @@
          (body : Expr)] ; The body in which the variable is bound. 
   [if0E (if-expr : Expr)
         (then-expr : Expr)
-        (else-expr : Expr)])
+        (else-expr : Expr)]
+  [recE (name : symbol)
+        (value : Expr)])
 
 
 (define (parse [s-exp : s-expression]) : Expr
@@ -79,13 +83,14 @@
                           (parse (third lst)))] 
                [(*) (mulE (parse (second lst)) 
                           (parse (third lst)))]
-               #;[(with) (appE (funE (s-exp->symbol (first (s-exp->list (second lst)))) 
-                                   (parse (third lst)))
-                             (parse (second (s-exp->list (second lst)))))]
+               [(-) (subE (parse (second lst))
+                          (parse (third lst)))]
                [(with) (withE (s-exp->symbol (first (s-exp->list (second lst))))
                               (parse (second (s-exp->list (second lst))))
                               (parse (third lst)))]
                [(fun) (funE (s-exp->symbol (first (s-exp->list (second lst)))) 
+                            (parse (third lst)))]
+               [(rec) (recE (s-exp->symbol (second lst))
                             (parse (third lst)))]
                [else (error 'parse (string-append 
                                     "unknown operator 3len " 
@@ -158,7 +163,11 @@
 
     [if0E (i t e) (if (= 0 (numV-value (interp i env)))
                       (interp t env)
-                      (interp e env))]))
+                      (interp e env))]
+    
+    [recE (name value) (error 'interp "TODO recE\n")]
+    
+    [subE (lhs rhs) (error 'interp "TODO subE\n")]))
 
 
 ; A 'with' expression binds a value to a variable within its body. 
