@@ -1,28 +1,11 @@
 #lang plai-typed
 
-(define-type-alias (Env 'a) 
-  (symbol -> (optionof 'a)))
+(define-type Binding
+  [bind (name : symbol) (val : Value)])
 
-;; The empty environment. 
-(define empty-env : (Env 'a) 
-  (λ (a) (none)))
-
-;;; Returns an environment that contains the bindings in env, plus 
-;;; a binding from var to value.  If env already contains a binding 
-;;; for var, the new environment overrides that binding. 
-(define (extend-env [var : symbol] 
-                    [value : 'a] 
-                    [env : (Env 'a)]) : (Env 'a)
-  (λ (a) 
-    (if (eq? var a)
-        (some value)
-        (env a))))
-
-;; Looks up var in the environment.  If it's bound to some value, 
-;; returns (some value).  Otherwise, returns (none). 
-(define (lookup [var : symbol] 
-                [env : (Env 'a)]) : (optionof 'a) 
-  (env var))
+(define-type-alias Env (listof Binding))
+(define empty-env empty)
+(define extend-env cons)
 
 
 (define-type Value 
@@ -30,16 +13,15 @@
   ; A function closure: 
   [funV (var : symbol) ; The name of the function's argument. 
         (body : Expr) ; The body of the function. 
-        (env : (Env Value))]) ; The function's evaluation environment. 
+        (env : Env)]
+  [undefV (_ : void)]) ; The function's evaluation environment. 
 
-(define (extend-env-list [var : (listof symbol)] 
-                         [value : (listof 'a)] 
-                         [env : (Env 'a)]) : (Env 'a)
-  (if (not (= (length var) (length value)))
-      (error 'interp "error")
-      (if (empty? var)
-          env
-          (extend-env-list (rest var) (rest value) (extend-env (first var) (first value) env)))))
+(define (lookup [s : symbol] [env : Env]) : Value
+  (if (empty? env)
+      (error 'lookup (string-append "symbol not found: " (to-string s)))
+      (if (symbol=? s (bind-name (first env)))
+          (bind-val (first env))
+          (lookup s (rest env)))))
 
 (define-type Expr 
   [numE (value : number)] ; a numeric literal expression 
@@ -103,7 +85,7 @@
                [(if0) (if0E (parse (second lst))
                             (parse (third lst))
                             (parse (fourth lst)))])])]
-         [else (error 'parse "unknown number of args")]))]
+         [else (error 'parse (string-append "unknown number of args: " (to-string (length lst))))]))]
     [else (error 'parse (string-append "syntax error in " (to-string s-exp)))]))
  
 
@@ -124,7 +106,7 @@
 
 
 (define (interp [expr : Expr] 
-                [env : (Env Value)]) : Value 
+                [env : Env]) : Value 
   (type-case Expr expr 
     [numE (value) 
           (numV value)]
@@ -139,17 +121,25 @@
           (num- (interp lhs env) (interp rhs env))] 
     
     [varE (name)
-          (type-case (optionof Value) (lookup name env) 
-            [some (value) value] 
-            [none () (error 'interp (string-append "unbound variable " (to-string name)))])] 
+          (lookup name env)] 
     
     [withE (var bound body) 
-           (interp body (extend-env var (interp bound env) env))] 
+           (interp body 
+                   (extend-env (bind var
+                                     (interp bound env))
+                               env))] 
     
     [funE (var body) 
           (funV var body env)] 
-    
-    [appE (fun arg)
+
+    [appE (f a) 
+          (local ([define f-value (interp f env)])
+                  (interp (funV-body f-value)
+                          (extend-env (bind (funV-var f-value) 
+                                            (interp a env))
+                                      (funV-env f-value))))]
+
+    #;[appE (fun arg)
           (let ([temp (extend-env
                        (funV-var (interp fun env)) 
                        (interp arg env) 
@@ -160,9 +150,18 @@
                       (interp t env)
                       (interp e env))]
     
-    [recE (name value) (error 'interp "TODO recE\n")]
-    
-))
+    [recE (name value) 
+          (error 'todo "TODO\n")
+          #;(interp value env)
+          #;(let* ([b (box (undefV (void)))]
+                              [bound-val (interp value 
+                                                 (extend-env name
+                                                             b
+                                                             env))])
+                         (begin
+                           (set-box! b bound-val)
+                           (numV 1234)))
+          ]))
 
 
 ; A 'with' expression binds a value to a variable within its body. 
@@ -199,10 +198,27 @@
          (with (f (fun (x) (* x y)))
                (+ (f 8) (f (f 2)))))) ; => 42 
 
+(define test-rec-expr
+  '(rec fact 
+     (fun (n) 
+          (if0 n 
+               1 
+               (* n (fact (- n 1)))))))
+
+(define test-rec-app-expr
+  '((rec fact 
+     (fun (n) 
+          (if0 n 
+               1 
+               (* n (fact (- n 1))))))
+    (fact 3)))
+
+
 (test (interp (parse test-with-expr) empty-env) (numV 9))
 (test (interp (parse test-with-expr-2) empty-env) (numV 3))
 (test (interp (parse test-funA-expr) empty-env) (numV 25))
-(test/exn (interp (parse test-funA-expr-2) empty-env) "interp: unbound variable 'y")
+(test/exn (interp (parse test-funA-expr-2) empty-env) "lookup: symbol not found: 'y")
 (test (interp (parse test-funwith-expr) empty-env) (numV 42))
 (test (interp (parse '(* 3 (if0 (+ 1 2) 5 (* 3 4)))) empty-env) (numV 36)) 
 (test (interp (parse '(if0 (* 1 0) 5 (* 3 4))) empty-env) (numV 5)) 
+(test (interp (parse test-rec-expr) empty-env) (numV 4))
