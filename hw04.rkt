@@ -1,7 +1,7 @@
 #lang plai-typed
 
 (define-type Binding
-  [bind (name : symbol) (val : Value)])
+  [bind (name : symbol) (val : (boxof Value))])
 
 (define-type-alias Env (listof Binding))
 (define empty-env empty)
@@ -16,7 +16,7 @@
         (env : Env)]
   [undefV (_ : void)]) ; The function's evaluation environment. 
 
-(define (lookup [s : symbol] [env : Env]) : Value
+(define (lookup [s : symbol] [env : Env]) : (boxof Value)
   (if (empty? env)
       (error 'lookup (string-append "symbol not found: " (to-string s)))
       (if (symbol=? s (bind-name (first env)))
@@ -106,19 +106,19 @@
 
 
 (define (interp [expr : Expr] 
-                [env : Env]) : Value 
+                [env : Env]) : (boxof Value) 
   (type-case Expr expr 
     [numE (value) 
-          (numV value)]
+          (box (numV value))]
     
     [addE (lhs rhs) 
-          (num+ (interp lhs env) (interp rhs env))]
+          (box (num+ (unbox (interp lhs env)) (unbox (interp rhs env))))]
     
     [mulE (lhs rhs) 
-          (num* (interp lhs env) (interp rhs env))] 
+          (box (num* (unbox (interp lhs env)) (unbox (interp rhs env))))]
 
     [subE (lhs rhs) 
-          (num- (interp lhs env) (interp rhs env))] 
+          (box (num- (unbox (interp lhs env)) (unbox (interp rhs env))))]
     
     [varE (name)
           (lookup name env)] 
@@ -130,37 +130,28 @@
                                env))] 
     
     [funE (var body) 
-          (funV var body env)] 
+          (box (funV var body env))] 
 
     [appE (f a) 
-          (local ([define f-value (interp f env)])
+          (local ([define f-value (unbox (interp f env))])
                   (interp (funV-body f-value)
                           (extend-env (bind (funV-var f-value) 
                                             (interp a env))
                                       (funV-env f-value))))]
 
-    #;[appE (fun arg)
-          (let ([temp (extend-env
-                       (funV-var (interp fun env)) 
-                       (interp arg env) 
-                       env)])
-            (interp (funV-body (interp fun temp)) temp))]
-
-    [if0E (i t e) (if (= 0 (numV-value (interp i env)))
+    [if0E (i t e) (if (= 0 (numV-value (unbox (interp i env))))
                       (interp t env)
                       (interp e env))]
     
     [recE (name value) 
-          (error 'todo "TODO\n")
-          #;(interp value env)
-          #;(let* ([b (box (undefV (void)))]
-                              [bound-val (interp value 
-                                                 (extend-env name
-                                                             b
-                                                             env))])
-                         (begin
-                           (set-box! b bound-val)
-                           (numV 1234)))
+          (let* ([b (box (undefV (void)))]
+                 [bound-val (unbox (interp value 
+                                    (extend-env (bind name
+                                                      b)
+                                                env)))])
+            (begin
+              (set-box! b bound-val)
+              b))
           ]))
 
 
@@ -206,19 +197,30 @@
                (* n (fact (- n 1)))))))
 
 (define test-rec-app-expr
-  '((rec fact 
-     (fun (n) 
-          (if0 n 
-               1 
-               (* n (fact (- n 1))))))
-    (fact 3)))
+  '(with (g
+          (rec fact 
+            (fun (n) 
+                 (if0 n 
+                      1 
+                      (* n (fact (- n 1)))))))
+         (g 3)))
 
+(define test-rec-app-expr-2
+  '((rec f (fun (x) (+ x 1))) (f 3)))
+(define test-rec-app-expr-3
+  '((rec f (fun (x) (+ x 1))) 3))
+(define test-rec-app-expr-4
+  '(with (g (rec f (fun (x) (+ x 1)))) (g 3)))
 
-(test (interp (parse test-with-expr) empty-env) (numV 9))
-(test (interp (parse test-with-expr-2) empty-env) (numV 3))
-(test (interp (parse test-funA-expr) empty-env) (numV 25))
+(test (interp (parse test-with-expr) empty-env) (box (numV 9)))
+(test (interp (parse test-with-expr-2) empty-env) (box (numV 3)))
+(test (interp (parse test-funA-expr) empty-env) (box (numV 25)))
 (test/exn (interp (parse test-funA-expr-2) empty-env) "lookup: symbol not found: 'y")
-(test (interp (parse test-funwith-expr) empty-env) (numV 42))
-(test (interp (parse '(* 3 (if0 (+ 1 2) 5 (* 3 4)))) empty-env) (numV 36)) 
-(test (interp (parse '(if0 (* 1 0) 5 (* 3 4))) empty-env) (numV 5)) 
-(test (interp (parse test-rec-expr) empty-env) (numV 4))
+(test (interp (parse test-funwith-expr) empty-env) (box (numV 42)))
+(test (interp (parse '(* 3 (if0 (+ 1 2) 5 (* 3 4)))) empty-env) (box (numV 36)))
+(test (interp (parse '(if0 (* 1 0) 5 (* 3 4))) empty-env) (box (numV 5)))
+;(test (interp (parse test-rec-expr) empty-env) (box (funV 'n (if0E (varE 'n) (numE 1) (mulE (varE 'n) (appE (varE 'fact) (subE (varE 'n) (numE 1))))) (list (bind 'fact #0#)))))
+(test (interp (parse test-rec-app-expr) empty-env) (box (numV 6)))
+(test/exn (interp (parse test-rec-app-expr-2) empty-env) "lookup: symbol not found: 'f")
+(test (interp (parse test-rec-app-expr-3) empty-env) (box (numV 4)))
+(test (interp (parse test-rec-app-expr-4) empty-env) (box (numV 4)))
