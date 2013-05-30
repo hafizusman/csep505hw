@@ -152,13 +152,25 @@
           (k (box (funV var body env)))] 
     
     [withE (var bound body) 
-           (error 'todo "TODO")
+           (interp/k bound env
+                     (λ (bv)
+                       (interp/k body
+                                 (extend-env (bind var
+                                                   bv)
+                                             env ;???
+                                             ) k)))
            #;(interp body 
                      (extend-env (bind var
                                        (interp bound env))
                                  env))] 
     
     [appE (fe ae) 
+                    #;(local ([define f-value (unbox (interp f env))])
+              (interp (funV-body f-value)
+                      (extend-env (bind (funV-var f-value) 
+                                        (interp a env))
+                                  (funV-env f-value))))
+
           (interp/k fe env
                     (λ (fv)
                       (type-case Value (unbox fv)
@@ -241,13 +253,13 @@
 (define test-rec-app-expr-4
   '(with (g (rec f (fun (x) (+ x 1)))) (g 3)))
 
-;(test (interp (parse test-with-expr) empty-env) (box (numV 9)))
-;(test (interp (parse test-with-expr-2) empty-env) (box (numV 3)))
+(test (interp/k (parse test-with-expr) empty-env identity) (box (numV 9)))
+(test (interp/k (parse test-with-expr-2) empty-env identity) (box (numV 3)))
 (test (interp/k (parse test-funA-expr) empty-env identity) (box (numV 25)))
-;(test/exn (interp (parse test-funA-expr-2) empty-env) "lookup: symbol not found: 'y")
-;(test (interp (parse test-funwith-expr) empty-env) (box (numV 42)))
-;(test (interp (parse '(* 3 (if0 (+ 1 2) 5 (* 3 4)))) empty-env) (box (numV 36)))
-;(test (interp (parse '(if0 (* 1 0) 5 (* 3 4))) empty-env) (box (numV 5)))
+(test/exn (interp/k (parse test-funA-expr-2) empty-env identity) "lookup: symbol not found: 'y")
+(test (interp/k (parse test-funwith-expr) empty-env identity) (box (numV 42)))
+(test (interp/k (parse '(* 3 (if0 (+ 1 2) 5 (* 3 4)))) empty-env identity) (box (numV 36)))
+(test (interp/k (parse '(if0 (* 1 0) 5 (* 3 4))) empty-env identity) (box (numV 5)))
 ;(test (interp (parse test-rec-expr) empty-env) (box (funV 'n (if0E (varE 'n) (numE 1) (mulE (varE 'n) (appE (varE 'fact) (subE (varE 'n) (numE 1))))) (list (bind 'fact #0#)))))
 ;(test (interp (parse test-rec-app-expr) empty-env) (box (numV 6)))
 ;(test/exn (interp (parse test-rec-app-expr-2) empty-env) "lookup: symbol not found: 'f")
